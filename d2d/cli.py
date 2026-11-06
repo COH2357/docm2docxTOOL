@@ -24,11 +24,29 @@ from .testgen import create_test_docm
 from .verify import verify_conversion
 
 
+def _configure_streams() -> None:
+    """统一把 stdout/stderr 切到 UTF-8 + replace。
+
+    中文 Windows 的控制台/重定向管道默认是 GBK,遇到 '→'、'↔' 这类
+    GBK 装不下的字符会直接抛 UnicodeEncodeError,把整个命令打断。
+    控制台本身走 WriteConsoleW,输出仍是正常的中文,不会变乱码。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def _print(msg: str = "") -> None:
     try:
         print(msg)
-    except UnicodeEncodeError:                      # 老终端 GBK 兜底
-        print(msg.encode("utf-8", "replace").decode("ascii", "replace"))
+    except UnicodeEncodeError:
+        # 最后一道兜底:转成纯 ASCII 转义,绝不能再抛异常
+        try:
+            print(msg.encode("utf-8", "backslashreplace").decode("ascii", "backslashreplace"))
+        except Exception:
+            pass
 
 
 # --------------------------------------------------------------------------- #
@@ -268,6 +286,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] = None) -> int:
+    _configure_streams()
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     if not getattr(args, "func", None):

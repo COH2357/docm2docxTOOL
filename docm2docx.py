@@ -21,6 +21,20 @@ sys.path.insert(0, APP_DIR)
 ERROR_LOG = os.path.join(APP_DIR, "启动错误.log")
 
 
+def _configure_streams() -> None:
+    """把 stdout/stderr 切到 UTF-8 + replace。
+
+    中文 Windows 上,输出被重定向到文件/管道时默认编码是 GBK,
+    遇到 '→'、'↔' 这类字符会抛 UnicodeEncodeError 直接中断命令。
+    控制台走 WriteConsoleW,中文显示不受影响。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def _report_crash(exc: BaseException) -> None:
     """启动失败时:落盘日志 + 弹窗,避免用 pythonw 启动时静默退出。"""
     detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
@@ -83,12 +97,6 @@ def _word_registered() -> bool:
 
 def _run_check() -> int:
     """环境自检,输出给控制台看。"""
-    for stream in (sys.stdout, sys.stderr):
-        try:
-            stream.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-
     ok = True
     print("=" * 52)
     print("DOCM → DOCX 转换器 · 环境自检")
@@ -134,6 +142,7 @@ def _run_check() -> int:
 
 
 def main() -> int:
+    _configure_streams()
     argv = sys.argv[1:]
     if argv and argv[0] == "--check":
         return _run_check()

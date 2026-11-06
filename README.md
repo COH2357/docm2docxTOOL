@@ -248,6 +248,10 @@ docmtodocx/
 ├─ shortcut_name.txt     桌面快捷方式的中文名称
 ├─ requirements.txt
 ├─ README.md
+├─ tools/                 发布辅助(不参与运行)
+│  ├─ package_release.py  打包便携版 + 源码版 zip
+│  ├─ release.ps1         创建 GitHub Release 并上传附件
+│  └─ release-notes-v1.0.0.md
 └─ d2d/
    ├─ constants.py       Word/OOXML 常量
    ├─ scanner.py         文件系统遍历(兜底内核)
@@ -263,7 +267,25 @@ docmtodocx/
 
 ---
 
-## 九、注意事项
+## 九、自己打包并发 Release
+
+```bash
+# 1) 先生成便携运行时(一次即可,约 70MB)
+build-runtime.bat
+
+# 2) 打包 → 仓库上级目录得到两个 zip
+python tools/package_release.py 1.0.0
+
+# 3) 创建 Release 并上传附件(令牌来源:-Token / GITHUB_TOKEN / gh auth token / 剪贴板)
+pwsh -File tools/release.ps1 -Version 1.0.0 -NotesFile tools/release-notes-v1.0.0.md
+```
+
+`tools/release.ps1` 是幂等的:同名 Release 直接复用,同名附件自动跳过,重复执行不会重复上传。
+发布说明正文写在 `tools/release-notes-*.md`,就是 Release 页面显示的那段文字。
+
+---
+
+## 十、注意事项
 
 - 需要本机装有 **Microsoft Word**,本工具不解析或改写 OOXML,所有转换都由 Word 引擎完成。
 - 只处理 `.docm`;`.doc` / `.docx` 不在范围内。
