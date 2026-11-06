@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # 创建 GitHub Release 并上传打包好的 zip 附件。
 #
 # 用法:
@@ -15,7 +15,8 @@ param(
   [string]$Version = '1.0.0',
   [string]$Repo = 'COH2357/docm2docxTOOL',
   [string]$NotesFile = '',
-  [string]$Token = ''
+  [string]$Token = '',
+  [switch]$ReplaceAssets
 )
 
 $ErrorActionPreference = 'Stop'
@@ -71,16 +72,23 @@ try {
 }
 
 $uploadUrl = $release.upload_url -replace '\{.*\}$',''
+# 打包产物放在仓库的上一级目录(见 tools/package_release.py 的 OUT_DIR)
+$outDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $assets = @(
-  (Join-Path (Split-Path -Parent $PSScriptRoot) "docm2docx-v$Version-portable.zip"),
-  (Join-Path (Split-Path -Parent $PSScriptRoot) "docm2docx-v$Version-source.zip")
+  (Join-Path $outDir "docm2docx-v$Version-portable.zip"),
+  (Join-Path $outDir "docm2docx-v$Version-source.zip")
 )
 
 foreach ($path in $assets) {
   if (-not (Test-Path $path)) { Write-Host "==> 跳过(不存在): $path"; continue }
   $name = [System.IO.Path]::GetFileName($path)
   $existingAsset = @($release.assets) | Where-Object { $_.name -eq $name } | Select-Object -First 1
-  if ($existingAsset) { Write-Host "==> 跳过(已存在): $name"; continue }
+  if ($existingAsset) {
+    if (-not $ReplaceAssets) { Write-Host "==> 跳过(已存在): $name"; continue }
+    Write-Host "==> 删除旧附件(ReplaceAssets): $name"
+    Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/assets/$($existingAsset.id)" `
+      -Method Delete -Headers $h -TimeoutSec 60 | Out-Null
+  }
   $size = [int]((Get-Item $path).Length / 1MB)
   Write-Host "==> 上传 $name ($size MB) …"
   # 注意:必须用 ${uploadUrl} 界定变量名,否则 PowerShell 会把 ? 当成变量名的一部分
