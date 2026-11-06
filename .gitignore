@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 运行生成物(测试输出 / 日志 / Word 临时文件)
+selftest_output/
+启动错误.log
+*.log
+~$*
+
+# 第三方参考源码(Flow Launcher 全量源码,体积大;工具运行只需要
+# d2d/native/Everything.dll 这一个官方 SDK 文件,已在仓库内)
+Flow.Launcher-dev.zip
+_flow_ref/
+
+# IDE
+.idea/
+.vscode/
+*.swp
