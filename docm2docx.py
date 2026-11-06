@@ -114,6 +114,18 @@ def _run_check() -> int:
     if not word:
         ok = False
 
+    # 便携运行时
+    runtime_python = os.path.join(APP_DIR, "runtime", "python", "python.exe")
+    runtime_everything = os.path.join(APP_DIR, "runtime", "everything", "Everything.exe")
+    if os.path.isfile(runtime_python):
+        print("  便携 Python     : 已内置(runtime\\python),启动时优先使用")
+    else:
+        print("  便携 Python     : 未内置(可运行 准备便携环境.bat 生成)")
+    if os.path.isfile(runtime_everything):
+        print("  便携 Everything : 已内置(runtime\\everything),需要时自动拉起")
+    else:
+        print("  便携 Everything : 未内置(可运行 准备便携环境.bat 生成)")
+
     print("=" * 52)
     print("  结论:" + ("环境正常,可以启动。" if ok
                        else "存在缺失项,请先按上面的提示处理。"))

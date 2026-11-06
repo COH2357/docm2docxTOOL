@@ -16,6 +16,9 @@ selftest_output/
 Flow.Launcher-dev.zip
 _flow_ref/
 
+# 便携运行时(约 70MB,由 build-runtime.bat 从本机生成,不入库)
+runtime/
+
 # IDE
 .idea/
 .vscode/

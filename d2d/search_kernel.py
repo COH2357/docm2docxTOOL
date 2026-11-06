@@ -93,20 +93,31 @@ def _finalize(paths: Sequence[str], verify: bool = True) -> Tuple[List[str], int
 # 内核 1:Everything
 # --------------------------------------------------------------------------- #
 class EverythingKernel:
-    """通过 Everything 的 IPC 索引检索(需要 Everything 正在运行)。"""
+    """通过 Everything 的 IPC 索引检索(需要 Everything 正在运行)。
+
+    若本机没有运行中的 Everything,会自动拉起 runtime/everything 里内置的那份,
+    让整个工具在没装 Everything 的电脑上也能用上极速内核。
+    """
 
     name = "Everything"
     key = KERNEL_EVERYTHING
 
     EVERYTHING_REQUEST_FULL_PATH = 0x0004
     EVERYTHING_MAX = 0xFFFFFFFF
+    EVERYTHING_ERROR_IPC = 1
+    EVERYTHING_WINDOW_CLASS = "EVERYTHING_TASKBAR_NOTIFICATION"
 
-    def __init__(self, dll_path: Optional[str] = None):
-        self.dll_path = dll_path or os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "native", "Everything.dll")
+    def __init__(self, dll_path: Optional[str] = None,
+                 everything_exe: Optional[str] = None):
+        here = os.path.dirname(os.path.abspath(__file__))
+        self.dll_path = dll_path or os.path.join(here, "native", "Everything.dll")
+        self.everything_exe = everything_exe or os.path.join(
+            os.path.dirname(here), "runtime", "everything", "Everything.exe")
         self._dll = None
         self._ctypes = None
         self._load_error: Optional[str] = None
+        self._started_process = None
+        self.started_bundled = False
 
     # -- 加载 -------------------------------------------------------------- #
     def _load(self):
@@ -142,13 +153,80 @@ class EverythingKernel:
         return self._dll
 
     # -- 可用性 ------------------------------------------------------------ #
-    def available(self) -> bool:
+    def _ipc_ok(self) -> bool:
+        """做一次真实查询来判断 IPC 是否连通(而不是只看错误码)。"""
         try:
             dll = self._load()
-            # IPC 错误码 1 表示 Everything 没在运行
-            return dll.Everything_GetLastError() != 1
+            dll.Everything_SetSearchW("*")
+            ok = dll.Everything_QueryW(True)
+            return bool(ok) and dll.Everything_GetLastError() != self.EVERYTHING_ERROR_IPC
         except Exception:
             return False
+
+    def _everything_instance_exists(self) -> bool:
+        """系统里是否已有 Everything 实例(通过它的 IPC 窗口类判断)。"""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            found = []
+
+            @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+            def callback(hwnd, _lparam):
+                buffer = ctypes.create_unicode_buffer(256)
+                ctypes.windll.user32.GetClassNameW(hwnd, buffer, 256)
+                if buffer.value == self.EVERYTHING_WINDOW_CLASS:
+                    found.append(True)
+                    return False
+                return True
+
+            ctypes.windll.user32.EnumWindows(callback, 0)
+            return bool(found)
+        except Exception:
+            return False
+
+    def _start_bundled_everything(self, timeout: float = 20.0) -> bool:
+        """拉起内置的 Everything,并等它的 IPC 窗口就绪。"""
+        if not self.everything_exe or not os.path.isfile(self.everything_exe):
+            return False
+        try:
+            import subprocess
+            self._started_process = subprocess.Popen(
+                [self.everything_exe, "-startup"],
+                cwd=os.path.dirname(self.everything_exe))
+        except Exception:
+            return False
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(0.5)
+            if self._ipc_ok():
+                # 已有别的实例时,内置副本会立即退出,这种就不算"我们启动了"
+                self.started_bundled = self._started_process.poll() is None
+                return True
+        return False
+
+    def available(self) -> bool:
+        try:
+            self._load()
+        except Exception:
+            return False
+        if self._ipc_ok():
+            return True
+        # 已经有一个 Everything 实例了,却连不上 IPC —— 不再启动第二个,避免抢窗口
+        if self._everything_instance_exists():
+            return False
+        return self._start_bundled_everything()
+
+    def shutdown(self) -> None:
+        """如果是我们启动的内置 Everything,退出时关掉它。"""
+        process = self._started_process
+        self._started_process = None
+        if process is None:
+            return
+        try:
+            process.terminate()
+        except Exception:
+            pass
 
     def status(self) -> str:
         try:
@@ -353,8 +431,27 @@ class WalkKernel:
 # --------------------------------------------------------------------------- #
 # 编排
 # --------------------------------------------------------------------------- #
+_everything_singleton: Optional[EverythingKernel] = None
+
+
+def get_everything_kernel() -> EverythingKernel:
+    """Everything 内核单例 —— 记录我们是否拉起过内置实例,便于退出时清理。"""
+    global _everything_singleton
+    if _everything_singleton is None:
+        _everything_singleton = EverythingKernel()
+    return _everything_singleton
+
+
+def shutdown_everything() -> None:
+    """退出时关掉由本工具启动的内置 Everything(不影响用户自己开的)。"""
+    global _everything_singleton
+    if _everything_singleton is not None:
+        _everything_singleton.shutdown()
+        _everything_singleton = None
+
+
 def build_kernels() -> List:
-    return [EverythingKernel(), WindowsIndexKernel(), WalkKernel()]
+    return [get_everything_kernel(), WindowsIndexKernel(), WalkKernel()]
 
 
 def find_docm_files(roots: Sequence[str],
@@ -375,7 +472,7 @@ def find_docm_files(roots: Sequence[str],
         collected: List[str] = []
         errors: List[str] = []
         used: List[str] = []
-        for provider in (EverythingKernel(), WindowsIndexKernel()):
+        for provider in (get_everything_kernel(), WindowsIndexKernel()):
             if cancel is not None and cancel():
                 break
             try:
@@ -391,8 +488,11 @@ def find_docm_files(roots: Sequence[str],
 
         if collected:
             files, stale = _finalize(collected)
+            kernel_name = " + ".join(used)
+            if get_everything_kernel().started_bundled:
+                kernel_name += "(已自动启动内置 Everything)"
             return ScanResult(files=files, errors=errors,
-                              kernel="auto", kernel_name=" + ".join(used),
+                              kernel="auto", kernel_name=kernel_name,
                               elapsed=0.0, stale_skipped=stale)
 
         # 两个快内核都没结果,回退到遍历
@@ -402,7 +502,7 @@ def find_docm_files(roots: Sequence[str],
         return outcome
 
     if kernel == KERNEL_EVERYTHING:
-        candidates = [EverythingKernel()]
+        candidates = [get_everything_kernel()]
     elif kernel == KERNEL_WINDOWS_INDEX:
         candidates = [WindowsIndexKernel()]
     else:

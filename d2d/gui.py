@@ -899,6 +899,10 @@ class ConverterApp(tk.Tk):
             except tk.TclError:
                 pass
             self._poll_id = None
+        try:
+            search_kernel.shutdown_everything()      # 关掉我们启动的内置 Everything
+        except Exception:
+            pass
         self.destroy()
 
 

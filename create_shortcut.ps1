@@ -1,4 +1,4 @@
-# Create a Desktop shortcut for the DOCM -> DOCX converter.
+﻿# Create a Desktop shortcut for the DOCM -> DOCX converter.
 # ASCII-only on purpose; the Chinese shortcut name comes from shortcut_name.txt.
 $ErrorActionPreference = 'Stop'
 

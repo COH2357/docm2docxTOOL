@@ -16,9 +16,8 @@
 一键启动的内部流程:
 
 1. 先跑一次**环境体检** —— Python / pywin32 / tkinter / Microsoft Word 是否就绪;
-2. 缺依赖时自动执行 `pip install -r requirements.txt`,装完再继续;
-3. 用 `pythonw` 拉起 GUI,**不弹黑色控制台窗口**;
-4. 万一启动崩溃,会**弹窗报错**,并把完整堆栈写到程序目录下的 `启动错误.log`。
+2. **优先使用内置的便携运行时** `runtime\python\pythonw.exe`(没有才退回系统 Python),全程不弹黑色控制台窗口;
+3. 万一启动崩溃,会**弹窗报错**,并把完整堆栈写到程序目录下的 `启动错误.log`。
 
 想手动体检:
 
@@ -30,12 +29,32 @@ python docm2docx.py --check
 
 ---
 
+## 〇之二、便携运行时(免安装)
+
+程序目录下的 `runtime\` 是**内置的便携运行环境**,整个文件夹拷到任何 Windows 电脑都能直接跑,**不需要装 Python、不需要装 pywin32、不需要装 Everything**:
+
+```
+runtime\
+├─ python\      精简版 Python 3.14(含 tkinter 图形库 + pywin32 + pip),约 66 MB
+└─ everything\  Everything 主程序,约 3 MB
+```
+
+- `run.bat` 会**自动优先使用** `runtime\python\pythonw.exe`。
+- **Everything 内核**:若本机没有正在运行的 Everything,程序会**自动拉起** `runtime\everything\Everything.exe` 并等它的 IPC 就绪;退出时把由本工具启动的那个关掉(你自己开的实例不受影响)。若已有 Everything 实例但 IPC 不可用,则不会启动第二个去抢窗口,而是自动降级到 Windows 搜索索引。
+- `runtime\` 由 `build-runtime.bat` 生成(它会从本机 Python 精简复制一份,并收集 Everything;Everything 没装则从 voidtools.com 下载)。换机器时先跑一次这个脚本即可。
+- `runtime\` 约 70MB,**不入 Git**,需要时用脚本重新生成。
+
+> 想让内置的 Everything 拥有完整 NTFS 索引,请用管理员身份运行一次
+> `runtime\everything\Everything.exe -install-service`,装成系统服务后索引最全。
+
+---
+
 ## 一、特性
 
 | 能力 | 说明 |
 | --- | --- |
 | 扫描范围自由 | 整机所有分区、单个分区、任意文件夹、或手动挑选单个/多个 `.docm` 文件,可混选 |
-| **高速搜索内核** | 内置三档内核:**Everything 索引**(毫秒级)、**Windows 搜索索引**(快)、直接遍历(兜底)。整盘扫描从几分钟降到 0.02 秒 |
+| **高速搜索内核** | 内置三档内核:**Everything 索引**(毫秒级)、**Windows 搜索索引**(快)、直接遍历(兜底)。同一时刻结果与遍历完全一致,速度快一个数量级 |
 | 内容无损 | 通过 Word 引擎另存,标题层级、样式、列表、表格、图片、形状、超链接、域、页眉页脚、脚注、分页、字符级格式全部保留 |
 | 宏安全 | 打开 `.docm` 时强制禁用宏(`AutomationSecurity=ForceDisable`),不会执行任何 VBA |
 | 不动原件 | 全程只读打开,`.docm` 原文件保持不变,`.docx` 另存为新文件 |
@@ -147,11 +166,13 @@ python docm2docx.py selftest --dir .\selftest_output --keep
 
 扫描 `.docm` 曾经是整个工具最慢的一环:一个 E 盘遍历要好几分钟。现在内置三档内核,可以在界面上直接切换:
 
-| 内核 | 原理 | 实测(E 盘) | 前提 |
+| 内核 | 原理 | 实测(E 盘,同一时刻) | 前提 |
 | --- | --- | --- | --- |
-| **Everything 索引** | 走 Everything 的 IPC 索引(基于 NTFS USN 日志,常驻) | **0.02 秒 / 68 个** | 本机装有并运行着 Everything |
-| **Windows 搜索索引** | OLEDB `Search.CollatorDSO` 查系统索引 | 0.18 秒 / 33 个 | Windows 搜索服务(WSearch)运行中 |
-| **直接遍历** | 自己走文件系统 | 慢(分钟级) | 无,永远可用 |
+| **Everything 索引** | 走 Everything 的 IPC 索引(基于 NTFS USN 日志,常驻) | **1.3 秒 / 36 个** | 本机装有并运行着 Everything;没有的话会自动拉起内置的那份 |
+| **Windows 搜索索引** | OLEDB `Search.CollatorDSO` 查系统索引 | 0.2 秒 / 更少 | Windows 搜索服务(WSearch)运行中 |
+| **直接遍历** | 自己走文件系统 | 14 秒(冷缓存 126 秒)/ **同样 36 个** | 无,永远可用 |
+
+两种内核在**同一时刻实测结果完全一致**(36/36),Everything 只是快了一个数量级。注意 Everything 的索引里也包含回收站中的 `$I*.docm` / `$R*.docm` 元数据文件,程序会自动剔除。
 
 **默认是「自动」**:同时跑 Everything 与 Windows 索引并**取并集**——两者覆盖范围不同(实测 Everything 136 个 vs Windows 索引 47 个),合并才不漏;只有当两个快内核都没给出结果时,才回退到遍历。这样即使目标目录不在任何索引范围内,也不会误判成"没有文件"。
 
@@ -219,7 +240,9 @@ A: 不会。打开时强制 `AutomationSecurity=ForceDisable`,宏既不执行也
 ```
 docmtodocx/
 ├─ docm2docx.py          入口(默认启动 GUI,带参数走 CLI)
-├─ run.bat               一键启动(环境体检 + 无黑框拉起 GUI)
+├─ run.bat               一键启动(环境体检 + 优先用内置便携运行时)
+├─ build-runtime.bat     生成便携运行时(runtime\python + runtime\everything)
+├─ build-runtime.ps1     上面那个脚本调用的实际逻辑
 ├─ 创建桌面快捷方式.bat   在桌面创建"DOCM转DOCX转换器"图标
 ├─ create_shortcut.ps1   上面那个脚本调用的实际逻辑
 ├─ shortcut_name.txt     桌面快捷方式的中文名称
