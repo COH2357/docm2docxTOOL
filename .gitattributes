@@ -1,0 +1,17 @@
+# .bat 必须存成 CRLF:cmd.exe 在 LF 换行的批处理里解析多行命令会错位
+*.bat text eol=crlf
+
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# 源码保持 LF,跨平台一致
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.ini text eol=lf
+
+# 二进制
+*.dll binary
+*.png binary
+*.docx binary
+*.docm binary
