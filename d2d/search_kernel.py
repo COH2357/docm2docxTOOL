@@ -467,6 +467,12 @@ def find_docm_files(roots: Sequence[str],
     才降级到遍历磁盘 —— 否则"目标目录不在索引范围内"会被误判成没有文件。
     """
     roots = [os.path.abspath(r) for r in roots if r]
+    if not roots:
+        # 没有任何目录目标时绝不能去问索引:Everything/Windows 索引会把
+        # “空路径”理解成“全盘”,从而把整机 .docm 都返回。单文件目标由
+        # 调用方直接处理。
+        return ScanResult(files=[], errors=[], kernel=kernel,
+                          kernel_name="仅指定文件", elapsed=0.0, stale_skipped=0)
 
     if kernel == KERNEL_AUTO:
         collected: List[str] = []
