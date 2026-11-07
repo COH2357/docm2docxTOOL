@@ -73,6 +73,7 @@ class ConverterApp(tk.Tk):
         self.var_out_dir = tk.StringVar()
         self.var_overwrite = tk.StringVar(value=OVERWRITE_LABELS[OVERWRITE_SKIP])
         self.var_cleanup = tk.StringVar(value=CLEANUP_LABELS[CLEANUP_NONE])
+        self.var_repair = tk.BooleanVar(value=True)
         self.var_kernel = tk.StringVar(value=KERNEL_LABELS[KERNEL_AUTO])
         self.var_status = tk.StringVar(value="就绪")
         self.var_scan_info = tk.StringVar(value="尚未扫描")
@@ -216,6 +217,13 @@ class ConverterApp(tk.Tk):
                     CLEANUP_LABELS[CLEANUP_DELETE]])
         self.cmb_cleanup.pack(side="left", padx=4)
         ttk.Label(line3, text="← 仅对转换成功的文件生效,跳过/失败的一律保留").pack(side="left")
+
+        line4 = ttk.Frame(left_col)
+        line4.pack(side="top", anchor="w", pady=(6, 0))
+        ttk.Checkbutton(
+            line4, variable=self.var_repair,
+            text="转换失败时尝试修复损坏文档(会用 Word 修复并覆盖原 .docm,同时去除宏工程)",
+        ).pack(side="left")
 
         line2 = ttk.Frame(box4)
         line2.pack(side="right")
@@ -529,6 +537,7 @@ class ConverterApp(tk.Tk):
 
         # Tk 变量只能在主线程读取,先取出再交给后台线程
         unblock = self.var_unblock.get()
+        repair = self.var_repair.get()
 
         items = [ConvertItem(src=f["path"], root=f.get("root", ""),
                              dst=plan_output(f["path"], f.get("root", ""), output_root))
@@ -541,7 +550,7 @@ class ConverterApp(tk.Tk):
                 items, overwrite=overwrite, output_root=output_root,
                 cancel=self.cancel_event.is_set, on_item=on_item,
                 log=lambda m: self._post("log", m), unblock=unblock,
-                cleanup=cleanup)
+                cleanup=cleanup, repair=repair)
             self._post("convert_done", (summary, started))
 
         self._run_bg(worker, "转换")
@@ -605,6 +614,9 @@ class ConverterApp(tk.Tk):
                   f"耗时 {summary.elapsed:.1f}s")
         if summary.removed:
             self._log(f"源文件处理:已处理 {summary.removed} 个(仅转换成功的文件)")
+        if summary.repaired:
+            self._log(f"损坏修复:{summary.repaired} 个无法直接打开的文档已修复,"
+                      "原 .docm 已替换为去宏版本")
         if summary.cleanup_failed:
             self._log(f"源文件处理失败:{summary.cleanup_failed} 个,源文件已保留")
         for path, message in summary.errors[:20]:

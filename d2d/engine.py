@@ -23,6 +23,7 @@ from .constants import (
     OVERWRITE_REPLACE, OVERWRITE_SKIP, WD_ALERTS_NONE, WD_DO_NOT_SAVE_CHANGES,
     WD_FORMAT_DOCUMENT_DEFAULT, WD_FORMAT_XML_DOCUMENT_MACRO,
 )
+from .repair import repair_document, replace_source
 
 STATUS_PENDING = "待转换"
 STATUS_SUCCESS = "成功"
@@ -125,6 +126,7 @@ class ConvertItem:
     status: str = STATUS_PENDING
     message: str = ""
     elapsed: float = 0.0
+    repaired: bool = False               # 是否走了“修复损坏文档”流程
 
     @property
     def name(self) -> str:
@@ -139,6 +141,7 @@ class ConvertSummary:
     failed: int = 0
     removed: int = 0             # 转换成功后被处理掉的源 .docm 数量
     cleanup_failed: int = 0      # 源文件处理失败的数量
+    repaired: int = 0            # 先修复损坏文档、再转换成功的数量
     elapsed: float = 0.0
     cancelled: bool = False
     errors: List[Tuple[str, str]] = field(default_factory=list)
@@ -371,35 +374,32 @@ class WordSession:
 # --------------------------------------------------------------------------- #
 # 单文件转换
 # --------------------------------------------------------------------------- #
-def convert_one(word_app, src: str, dst: str, overwrite: str = OVERWRITE_SKIP) -> Tuple[str, str]:
-    """把单个 .docm 转成 .docx,返回 (状态, 说明)。"""
-    src = os.path.abspath(src)
-    dst = os.path.abspath(dst)
+@dataclass
+class ConversionResult:
+    """一次单文件转换的结果。"""
 
-    if not os.path.isfile(src):
-        return STATUS_FAILED, "源文件不存在"
-    if os.path.getsize(src) == 0:
-        return STATUS_FAILED, "源文件为空"
+    status: str
+    message: str
+    repaired: bool = False
 
-    if os.path.exists(dst):
-        if overwrite == OVERWRITE_SKIP:
-            return STATUS_SKIPPED, "目标文件已存在"
-        if overwrite == OVERWRITE_RENAME:
-            dst = unique_path(dst)
-        else:
-            try:
-                os.remove(dst)
-            except OSError as exc:
-                return STATUS_FAILED, f"无法覆盖已有文件: {exc}"
 
-    # Word 另存到不存在的目录会报"这不是有效文件名",这里先确保目录存在
-    parent = os.path.dirname(dst)
-    if parent and not os.path.isdir(parent):
-        try:
-            os.makedirs(parent, exist_ok=True)
-        except OSError as exc:
-            return STATUS_FAILED, f"无法创建输出目录: {exc}"
+def _prepare_destination(dst: str, overwrite: str) -> Tuple[str, str, str]:
+    """处理“目标已存在”的情况。返回 (dst, 状态, 说明);状态为空表示继续。"""
+    if not os.path.exists(dst):
+        return dst, "", ""
+    if overwrite == OVERWRITE_SKIP:
+        return "", STATUS_SKIPPED, "目标文件已存在"
+    if overwrite == OVERWRITE_RENAME:
+        return unique_path(dst), "", ""
+    try:
+        os.remove(dst)
+    except OSError as exc:
+        return "", STATUS_FAILED, f"无法覆盖已有文件: {exc}"
+    return dst, "", ""
 
+
+def _save_docx(word_app, src: str, dst: str) -> Tuple[str, str]:
+    """用 Word 把 src 另存为 .docx。返回 (状态, 说明)。"""
     doc = None
     try:
         doc = word_app.Documents.Open(
@@ -427,6 +427,86 @@ def convert_one(word_app, src: str, dst: str, overwrite: str = OVERWRITE_SKIP) -
                 pass
 
 
+def _discard(path: str) -> None:
+    try:
+        if path and os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def convert_one(word_app, src: str, dst: str, overwrite: str = OVERWRITE_SKIP,
+                repair: bool = False,
+                log: Optional[Callable[[str], None]] = None) -> ConversionResult:
+    """把单个 .docm 转成 .docx。
+
+    ``repair=True`` 时,若正常转换失败,会尝试修复损坏的 .docm:
+    先用 Word 自带的“打开并修复”,失败再修 OPC 包结构,然后由 Word
+    另存为 .docm。修复成功后会**覆盖原 .docm**(同时去掉宏工程),再继续
+    转成 .docx。
+    """
+    src = os.path.abspath(src)
+    dst = os.path.abspath(dst)
+
+    if not os.path.isfile(src):
+        return ConversionResult(STATUS_FAILED, "源文件不存在")
+    if os.path.getsize(src) == 0:
+        return ConversionResult(STATUS_FAILED, "源文件为空")
+
+    dst, prep_status, prep_message = _prepare_destination(dst, overwrite)
+    if prep_status:
+        return ConversionResult(prep_status, prep_message)
+
+    # Word 另存到不存在的目录会报"这不是有效文件名",这里先确保目录存在
+    parent = os.path.dirname(dst)
+    if parent and not os.path.isdir(parent):
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except OSError as exc:
+            return ConversionResult(STATUS_FAILED, f"无法创建输出目录: {exc}")
+
+    status, message = _save_docx(word_app, src, dst)
+    if status == STATUS_SUCCESS or not repair:
+        return ConversionResult(status, message)
+
+    # ---- 转换失败:尝试修复损坏的文档 ------------------------------- #
+    first_error = message
+    if log:
+        log(f"  转换失败,尝试修复: {os.path.basename(src)} — {first_error}")
+
+    outcome = repair_document(word_app, src, log=log)
+    if not outcome.ok:
+        if log:
+            log(f"  修复失败: {outcome.detail}")
+        return ConversionResult(STATUS_FAILED, f"{first_error}｜修复失败: {outcome.detail}")
+
+    # 按要求先把修复后的 .docm 覆盖回原文件;覆盖失败则退而用临时副本转换
+    replaced, replace_note = replace_source(src, outcome.path)
+    convert_src = src if replaced else outcome.path
+    if log:
+        if replaced:
+            log("  已修复并覆盖原 .docm(宏工程已去除),继续转换 …")
+        else:
+            log(f"  已修复,但覆盖原文件失败({replace_note}),改用临时副本转换 …")
+
+    dst, _, _ = _prepare_destination(dst, OVERWRITE_REPLACE)
+    status2, message2 = _save_docx(word_app, convert_src, dst)
+    if status2 == STATUS_SUCCESS:
+        if replaced:
+            detail = "已修复并覆盖原 .docm(已去宏)"
+        else:
+            detail = f"已修复为临时副本(覆盖原文件失败: {replace_note})"
+        return ConversionResult(STATUS_SUCCESS, f"{message2} | {detail}", repaired=True)
+
+    if not replaced:
+        _discard(outcome.path)
+    extra = "原 .docm 已修复为可打开的 .docm" if replaced else ""
+    return ConversionResult(
+        STATUS_FAILED,
+        f"{first_error}｜修复后仍无法转换: {message2}" + (f"｜{extra}" if extra else ""))
+
+
+
 # --------------------------------------------------------------------------- #
 # 批量转换
 # --------------------------------------------------------------------------- #
@@ -438,6 +518,7 @@ def convert_batch(items: Sequence[ConvertItem],
                   log: Optional[LogCb] = None,
                   unblock: bool = True,
                   cleanup: str = CLEANUP_NONE,
+                  repair: bool = False,
                   session: Optional[WordSession] = None) -> ConvertSummary:
     """批量转换。item.dst 为空时按 output_root/源目录自动推导。
 
@@ -446,6 +527,9 @@ def convert_batch(items: Sequence[ConvertItem],
       CLEANUP_RECYCLE 移到回收站(可恢复)
       CLEANUP_DELETE  永久删除
     只有转换**成功**的文件才会被处理,跳过/失败的一律保留。
+
+    repair=True 时,转换失败会先尝试修复损坏的 .docm(见 convert_one)。
+    修复成功会覆盖原 .docm,所以 cleanup 同样作用于修复后的文件。
     """
     summary = ConvertSummary(total=len(items))
     if not items:
@@ -483,21 +567,25 @@ def convert_batch(items: Sequence[ConvertItem],
 
             item.elapsed = 0.0
             begin = time.time()
-            status, message = convert_one(word_app, item.src, item.dst, overwrite)
+            result = convert_one(word_app, item.src, item.dst, overwrite,
+                                 repair=repair, log=emit)
             item.elapsed = time.time() - begin
-            item.status = status
-            item.message = message
+            item.status = result.status
+            item.message = result.message
+            item.repaired = result.repaired
 
-            if status == STATUS_SUCCESS:
+            if result.status == STATUS_SUCCESS:
                 summary.success += 1
-            elif status == STATUS_SKIPPED:
+                if result.repaired:
+                    summary.repaired += 1
+            elif result.status == STATUS_SKIPPED:
                 summary.skipped += 1
             else:
                 summary.failed += 1
-                summary.errors.append((item.src, message))
+                summary.errors.append((item.src, result.message))
 
             # 转换成功后才处理源文件;跳过/失败的一律保留
-            if status == STATUS_SUCCESS and cleanup != CLEANUP_NONE:
+            if result.status == STATUS_SUCCESS and cleanup != CLEANUP_NONE:
                 removed, note = remove_source(item.src, cleanup)
                 if removed:
                     summary.removed += 1

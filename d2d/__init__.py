@@ -6,6 +6,7 @@
     scanner    磁盘 / 文件夹 / 单文件扫描
     ooxml      OOXML(OPC zip)结构解析与文本提取
     engine     Word COM 转换引擎
+    repair     损坏 .docm 的修复(Word 修复 + OPC 包结构修复)
     testgen    测试用 .docm 生成
     verify     转换结果机器校验
     gui        Tkinter 图形界面
@@ -18,6 +19,7 @@ __all__ = [
     "scanner",
     "ooxml",
     "engine",
+    "repair",
     "testgen",
     "verify",
     "gui",

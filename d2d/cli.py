@@ -161,12 +161,16 @@ def cmd_convert(args) -> int:
         log=lambda m: _print(f"  · {m}"),
         on_item=on_item,
         cleanup=args.delete_source,
+        repair=not args.no_repair,
     )
     _print("")
     _print("=" * 56)
     _print(f"总计 {summary.total} | 成功 {summary.success} | "
            f"跳过 {summary.skipped} | 失败 {summary.failed} | "
            f"耗时 {summary.elapsed:.1f}s")
+    if summary.repaired:
+        _print(f"损坏修复:{summary.repaired} 个无法直接打开的文档已修复,"
+               "原 .docm 已替换为去宏版本")
     if summary.removed:
         _print(f"源文件已按设置处理:{summary.removed} 个")
     if summary.cleanup_failed:
@@ -268,6 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "recycle=移到回收站(可恢复) delete=永久删除")
     p_conv.add_argument("-y", "--yes", action="store_true",
                         help="跳过确认(配合 --delete-source 使用)")
+    p_conv.add_argument("--no-repair", action="store_true",
+                        help="转换失败时不尝试修复损坏文档(默认会修复并覆盖原 .docm)")
     p_conv.add_argument("--no-recursive", action="store_true", help="不递归子目录")
     p_conv.add_argument("--include-system", action="store_true", help="不跳过系统目录")
     p_conv.add_argument("--kernel", choices=[KERNEL_AUTO, KERNEL_EVERYTHING,

@@ -21,8 +21,8 @@ WD_PROMPT_TO_SAVE_CHANGES = -2
 
 # --- 警告级别 (WdAlertLevel) ---
 WD_ALERTS_NONE = 0
-WD_ALERTS_MESSAGE_BOX = 1
-WD_ALERTS_ALL = 2
+WD_ALERTS_MESSAGE_BOX = -2
+WD_ALERTS_ALL = -1
 
 # --- Office 自动化安全 (MsoAutomationSecurity) ---
 MSO_AUTOMATION_SECURITY_LOW = 1
