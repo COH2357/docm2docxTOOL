@@ -23,3 +23,8 @@ runtime/
 .idea/
 .vscode/
 *.swp
+
+# 本地样本 / 事故记录(不随仓库发布)
+*.docm
+*.docx
+误修复清单-*.txt
