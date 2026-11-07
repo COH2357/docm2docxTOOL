@@ -20,7 +20,9 @@ VERSION = sys.argv[1] if len(sys.argv) > 1 else "1.0.0"
 BASE = "docm2docx"
 
 SKIP_DIRS = {".git", "__pycache__", "selftest_output", "_flow_ref", "tools"}
-SKIP_FILES = {"Flow.Launcher-dev.zip", "启动错误.log"}
+SKIP_FILES = {"Flow.Launcher-dev.zip"}
+SKIP_EXTS = {".pyc", ".pyo", ".log", ".docm", ".docx"}
+SKIP_PREFIXES = ("启动错误", "误修复清单")
 
 
 def collect(include_runtime: bool):
@@ -33,9 +35,11 @@ def collect(include_runtime: bool):
         if not include_runtime and parts and parts[0] == "runtime":
             continue
         for name in filenames:
-            if name in SKIP_FILES or name.endswith(".pyc") or name.startswith("~$"):
+            if name in SKIP_FILES:
                 continue
-            if name.startswith("启动错误"):
+            if os.path.splitext(name)[1].lower() in SKIP_EXTS:
+                continue
+            if name.startswith("~$") or name.startswith(SKIP_PREFIXES):
                 continue
             full = os.path.join(dirpath, name)
             rel = os.path.join(BASE, os.path.relpath(full, ROOT))
